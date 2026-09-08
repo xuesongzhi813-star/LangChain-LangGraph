@@ -30,4 +30,4 @@ result=agent.invoke(
 )
 
 #打印状态为messages的
-print(result["messages"][-1].content_blocks)
+print(result["messages"])
