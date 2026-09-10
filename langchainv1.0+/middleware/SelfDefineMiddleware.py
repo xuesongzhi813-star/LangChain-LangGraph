@@ -18,6 +18,8 @@ model=ChatOpenAI(
     api_key=os.getenv("DEEPSEEK_API_KEY"),
 )
 
+
+
 #定义工具
 @tool
 def search_for_weather(city:str)->str:
