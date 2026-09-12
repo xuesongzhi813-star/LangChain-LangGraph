@@ -1,4 +1,5 @@
 from fastmcp import FastMCP
+# from mcp.server.fastmcp import FastMCP
 
 #定义MCP
 mcp=FastMCP("weather_server")

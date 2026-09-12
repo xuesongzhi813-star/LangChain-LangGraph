@@ -1,5 +1,6 @@
 from fastmcp import FastMCP
 
+# from mcp.server.fastmcp import FastMCP
 mcp=FastMCP("Math-Server")
 
 @mcp.tool
