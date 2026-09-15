@@ -80,11 +80,11 @@ print(result.interrupts)
 #     print(result.value["messages"][-1].content)
 # else:
 #     for interrupt in result.interrupts:
-#         #interrupt.value 才是中断的载荷：包含待人工审批的工具调用的详情
-#         for request in interrupt.value["action_requests"]:
-#             print(f"等待人工审批 工具: {request['name']}")
-#             print(f"参数: {request['args']}")
-#             print(f"说明: {request['description']}")
+#         print(interrupt.value)  #才是中断的载荷：包含待人工审批的工具调用的详情
+#         # for request in interrupt.value["action_requests"]:
+#         #     print(f"等待人工审批 工具: {request['name']}")
+#         #     print(f"参数: {request['args']}")
+#         #     print(f"说明: {request['description']}")
 
 #恢复工具调用
 result=agent.invoke(

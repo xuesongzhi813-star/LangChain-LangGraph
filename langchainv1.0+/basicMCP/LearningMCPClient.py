@@ -31,6 +31,7 @@ async def main():
             "args": ["D:\LangChain\LangChain-LangGraph\langchainv1.0+\MCP\LearningMCPServer.py"]
         }
         },
+        tool_interceptors=[append_state],
     )
 
     async with client.session("learning_server") as session:
