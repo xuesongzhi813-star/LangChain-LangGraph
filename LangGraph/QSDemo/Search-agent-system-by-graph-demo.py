@@ -1,0 +1,124 @@
+import operator
+from typing import TypedDict, Annotated
+
+from langchain.chat_models import init_chat_model
+from langchain_core.messages import AnyMessage, HumanMessage, ToolMessage, SystemMessage
+from langchain_tavily import TavilySearch
+from langgraph.constants import START, END
+from langgraph.graph import StateGraph
+
+#准备工作:
+#定义聊天模型
+model=init_chat_model(
+    model="deepseek-v4-flash"
+)
+#定义搜索工具
+#定义工具
+search_tool=TavilySearch(max_results=3)
+tools=[search_tool]
+with_tool_model=model.bind_tools(tools)
+
+#1.定义状态
+class MessageState(TypedDict):
+    #定义一个“消息列表”作为状态存储（这样在图的执行过程中，总是不断更新的）-->存储所有的“历史消息”
+    messages:Annotated[list[AnyMessage],operator.add]
+
+    #定义LLM的调用次数
+    llm_calls:int
+
+#2.定义节点
+#定义LLM调用节点
+def llm_call_node(state:MessageState):
+    '''
+    LLM调用节点的两种可能：
+    1.LLM判断无需调用工具，返回的AIMessage中无tool_call直接返回结果结束
+    2.LLM判断需要调用工具，返回的AIMessage中有tool_call跳转“工具节点”调用工具
+    '''
+    #从“历史消息”列表中拿到最新的消息-->HumanMessage
+    #拼凑成系统提示词，传给LLM
+    #状态更新
+    return {
+        "messages":[
+            with_tool_model.invoke(
+                [
+                    SystemMessage(
+                        content="你是一个乐于助人的助手，支持调用工具进行搜索"
+                    )
+                ]
+                +state["messages"]
+            )
+        ],
+        "llm_calls":state.get("llm_calls",0)+1
+    }
+
+
+tools_by_name = {tool.name: tool for tool in tools} #
+#定义工具调用节点
+def tool_call_node(state:MessageState):
+    '''
+    从“历史消息状态列表”中获取到最新的消息-->AIMessage从而得到tool_call
+     -->从tool_call中得到调用哪个工具
+    '''
+    #从“历史消息状态列表”中获取AIMessage
+    latest_message=state["messages"][-1]
+    result=[]
+    #遍历所有到所有的tool_call（要求调用的工具），并且比对是否有这个工具
+    for tool_call in latest_message.tool_calls:
+        tool=tools_by_name[tool_call["name"]] #根据名字获取到工具
+        fianl=tool.invoke(tool_call["args"]) #调用工具
+        result.append(ToolMessage(content=str(fianl),
+                                  tool_call_id=tool_call["id"])) #消息列表添加
+
+    #更新状态
+    return {
+        "messages":result,
+    }
+
+#3.定义图
+search_agent_system=StateGraph(MessageState)
+
+#4.添加节点
+search_agent_system.add_node(llm_call_node)
+search_agent_system.add_node(tool_call_node)
+
+#5.添加边
+search_agent_system.add_edge(START,"llm_call_node") #固定边
+
+#定义“决策函数”（路由）
+def decide_way(
+        state:MessageState,
+):
+    '''
+    根据最新消息AIMessage中是否有tool_call来判断走向：
+    有tool_call:走工具节点
+    无tool_call:直接返回结果，走END
+    '''
+    #先获取到最新的消息
+    latest_message=state["messages"][-1]
+    if latest_message.tool_calls:
+        return "tool_call_node"
+    else:
+        return END
+#条件边
+search_agent_system.add_conditional_edges("llm_call_node",decide_way,["tool_call_node",END])
+#工具节点执行完回到LLM节点，形成循环
+search_agent_system.add_edge("tool_call_node","llm_call_node")
+
+#6.编译图
+search_agent_system=search_agent_system.compile()
+
+#7.测试运行结果
+#response是总的消息集合，整个一轮下来的
+response = search_agent_system.invoke(
+    {"messages":[HumanMessage(content="今天南京的天气如何")]}
+)
+print(f"LLM的总调用次数为:{response["llm_calls"]}")
+for m in response["messages"]:
+    m.pretty_print()
+
+
+
+
+
+
+
