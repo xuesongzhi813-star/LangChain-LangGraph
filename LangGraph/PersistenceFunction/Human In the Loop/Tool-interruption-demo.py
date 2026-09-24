@@ -83,7 +83,7 @@ config={"configurable":{"thread_id":"1"}}
 result1=graph.invoke({"messages":[HumanMessage(content="帮我发一封邮件到Bob@qq.com，主题是请假信，因为需要回老家")]},config=config)
 print(result1)
 
-result2=graph.invoke(Command(resume={"decision":"no"}),config=config)
+result2=graph.invoke(Command(resume={"decision":"同意","subject":"病假信","content":"看牙医"}),config=config)
 print(result2)
 for msg in result2["messages"]:
     msg.pretty_print()
