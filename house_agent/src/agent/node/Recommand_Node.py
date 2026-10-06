@@ -1,7 +1,12 @@
+import os
 import uuid
 from typing import Optional, Dict
 
-from langchain_core.messages import filter_messages, HumanMessage, SystemMessage
+from dotenv import load_dotenv
+from langchain_community.agent_toolkits import SQLDatabaseToolkit
+from langchain_community.utilities import SQLDatabase
+from langchain_core.messages import filter_messages, HumanMessage, SystemMessage, AIMessage
+from langgraph.prebuilt import ToolNode
 from langgraph.runtime import Runtime
 from langgraph.store.base import BaseStore
 from langgraph.types import interrupt
@@ -93,7 +98,7 @@ def collect_user_info(state:RecommandState,runtime:Runtime[ContextSchema],*,stor
         如果用户提到价格范围，请分别提取最低和最高预算。
         如果用户提到推荐几套房，提取room_count字段。"""
         )
-        llm_with_structed.invoke([system_message]+user_messages)
+        return llm_with_structed.invoke([system_message]+user_messages)
 
     #这里封装之后，想要再次进行“提取信息”的环节，只需要准备好用户消息列表即可
     #调用“提取信息”的方法
@@ -129,13 +134,14 @@ def collect_user_info(state:RecommandState,runtime:Runtime[ContextSchema],*,stor
         prompt += "如果您不想提供，请输入'**不提供**',我会根据已有信息为您推荐房源。"
         answer=interrupt(prompt) # 中断+接受用户的决策
         #如果用户选择“不提供”，则默认补充
-        if str(answer).strip("不提供"):
+        #注意：strip("不提供")是按字符剥两端，不是比较相等，必须用==判断
+        if str(answer).strip() == "不提供":
             if not update_states.get("city"):
                 update_states["city"]="随机城市"
             if not update_states.get("budget_min"):
-                update_states["budget_min"]="500元/月"
+                update_states["budget_min"]=500
             if not update_states.get("budget_max"):
-                update_states["budget_max"]="5000元/月"
+                update_states["budget_max"]=5000
             if not update_states.get("room_count"):
                 update_states["room_count"]=5
         else:
@@ -149,7 +155,8 @@ def collect_user_info(state:RecommandState,runtime:Runtime[ContextSchema],*,stor
     #前提：如果更新状态中有“最大预算”/“最小预算”才进行更新
     if update_states.get("budget_min") or update_states.get("budget_max"):
         #获取当前用户的id（上下文）-->确定store中存储的“容器”
-        user_id=runtime.context.get("user_id")
+        #注意：ContextSchema是dataclass，要用属性访问，没有.get方法
+        user_id=runtime.context.user_id
         #构造查询的namespace
         namespace=(user_id,"preference")
         #查询store,namespace就像查询的索引，由user_id确认唯一性
@@ -170,6 +177,9 @@ def collect_user_info(state:RecommandState,runtime:Runtime[ContextSchema],*,stor
         else:
             '''进行“更新”操作，要判断存储的预算范围和新的预算范围的包含关系，决定是否更新'''
             pres=store_result[0].value
+            #store中存的是UserPreference实例，统一转成dict再操作（保持None键存在，供下方判断）
+            if not isinstance(pres,dict):
+                pres=pres.model_dump()
             new_max_budget=update_states.get("budget_max")
             new_min_budget=update_states.get("budget_min")
             cur_max_budget=pres["max_budget"]
@@ -194,16 +204,17 @@ def collect_user_info(state:RecommandState,runtime:Runtime[ContextSchema],*,stor
                     pres["max_budget"]=new_max_budget
                 if update_min_budget:
                     pres["min_budget"]=new_min_budget
-                    # 最终更新store
-                    store.put(
-                        namespace,
-                        store_result[0].key,
-                        pres
-                    )
-                    update_states["user_preference"]=pres #此处已经是dict
+                # 最终更新store（无论改的是max还是min，都要写回）
+                store.put(
+                    namespace,
+                    store_result[0].key,
+                    pres
+                )
+                update_states["user_preference"]=pres #此处已经是dict
 
     #5.最终更新，历史消息列表
     #字典转字符，去添加
+    #相当于本节点更新了“recommand所需的一些参数”+“参数转成了HumanMessage加入了历史消息列表”
     update_states["messages"]=[HumanMessage(content=get_recommend_info(update_states))]
     print(f"已收集用户信息：\n城市：{update_states.get('city')}"
           f"区域：{update_states.get('district')}"
@@ -214,13 +225,120 @@ def collect_user_info(state:RecommandState,runtime:Runtime[ContextSchema],*,stor
     #因为更新return{}中是字典形式，直接返回字典即可
     return update_states
 
+#通过使用SQLDataBase的工具包，实现与“数据库交互”的工具
+# 使用.env环境变量(win)
+load_dotenv()
+db_user = os.getenv('DB_USER')
+db_password = os.getenv('DB_PASSWORD')
+db_host = os.getenv('DB_HOST')
+db_port = os.getenv('DB_PORT')
+db_name = os.getenv('DB_NAME')
+db = SQLDatabase.from_uri(f"mysql+pymysql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}")
+
+# 获取数据库工具
+toolkit = SQLDatabaseToolkit(db=db, llm=model)
+tools = toolkit.get_tools()
+for tool in tools:
+    print(tool)
+
+#定义“工具节点”
+# 节点：获取表信息
+get_schema_tool =  next(tool for tool in tools if tool.name == "sql_db_schema")
+get_schema_node = ToolNode([get_schema_tool], name="get_schema")  # 工具执行节点（返回ToolMessage）
+# 节点：执行sql查询-->用于checkSQL的有效性
+run_query_tool =  next(tool for tool in tools if tool.name == "sql_db_query")
+run_query_node = ToolNode([run_query_tool], name="run_query")     # 工具执行节点（返回ToolMessage）
+
+#定义节点:获取所有表-->通过手动调用的方式
+#调用方式:AIMessage(带有tool_calls)-->ToolMessage-->整合结果得到AIMessage
+#为什么手动调用？因为一定是要查询了数据库，助手才能给推荐
+def list_tables(state:RecommandState):
+    #1.手动构造tool_call+AIMessage
+    tool_call={
+        "name": "sql_db_list_tables",
+        "args": {}, #获取表，不需要参数
+        "id": "123456",
+        "type": "tool_call",
+    }
+    #构造AIMessage
+    tool_call_message=AIMessage(content="",tool_calls=[tool_call])
+
+    #2.手动调用工具
+    list_tables_tool=next(tool for tool in tools if tool.name == "sql_db_list_tables")
+    tool_message=list_tables_tool.invoke(tool_call)
+
+    #3.整合结果
+    response=AIMessage(content=f"可用的表:{tool_message.content}")
+    return {
+        "messages":[tool_call_message,tool_message,response] #分别是AIM，ToolM，AIM
+    }
+
+#定义节点:获取表的详细信息
+def call_get_schema(state:RecommandState):
+    '''使用LLM绑定工具来实现'''
+    #绑定工具后，即可生成带有tool_call的AIMessage
+    #此处设置tool_choice为any，因为进行“租房推荐”是一定要“查询数据库”的，因此，这里的tool_call是必须的
+    llm_with_tool=model.bind_tools([get_schema_tool],tool_choice="any")
+    response=llm_with_tool.invoke(state["messages"])
+    return {
+        "messages":[response],
+    }
 
 
+#定义节点:生成SQL+整合结果
+def generate_query(state:RecommandState):
+    generate_query_system_prompt = """
+    您是一个设计用于与SQL数据库交互的代理。
+    给定一个输入问题，创建一个语法正确的{dialect}查询来运行，然后查看查询的结果并返回答案。
+    需要根据rows from table的示例设置真实查询的值。
+    除非用户指定了他们希望获得的特定数量的示例，否则始终将查询限制为最多{top_k}个结果。
+    您可以按相关列对结果排序，以返回最感兴趣的结果。不要查询特定表中的所有列，只查询给定问题的相关列。
+    不要对数据库做任何DML语句（INSERT， UPDATE， DELETE， DROP等)。
+            """
 
+    system_prompt=generate_query_system_prompt.format(
+        dialect=db.dialect,
+        top_k=state.get("room_count",5)
+    )
+    '''
+    本节点的作用:根据前面的数据，满足用户“租房需求”-->构建SQL语句/用户提的不相干的问题-->直接回答即可
+    实现:实现提示词模板-->模型绑定工具-->更新状态，即添加消息列表，若租房则是带有tool_call的AIMessage；若不相干问题则是直接答案AIMessage
+    '''
 
+    system_message=SystemMessage(content=system_prompt)
+    llm_with_tool=model.bind_tools([run_query_tool])
+    return {
+        "messages":[llm_with_tool.invoke([system_message]+state["messages"])]
+    }
 
-
-
+#定义节点:检查节点:检查SQL的语法错误，借用LLM实现
+def check_query(state:RecommandState):
+    '''上一步生成SQL节点，一定是走了生成SQL，AIMessage(带有tool_call)'''
+    check_query_system_prompt = """
+    你是一个非常注重细节的SQL专家。仔细检查{dialect}查询中的常见错误，包括：
+    -使用NULL值的NOT IN
+    -在应该使用UNION ALL时使用UNION
+    -使用BETWEEN表示独占范围
+    -谓词中的数据类型不匹配
+    -正确引用标识符
+    -使用正确数量的函数参数
+    -转换为正确的数据类型
+    -使用合适的列进行连接
+    如果存在上述任何错误，请重写查询。如果没有错误，只需复制原始查询即可。
+    在运行此检查之后，您将调用适当的工具来执行查询。
+            """.format(dialect=db.dialect)
+    system_message=SystemMessage(content=check_query_system_prompt)
+    #将SQL作为用户消息传入检查
+    tool_call=state["messages"][-1].tool_calls[0]
+    user_message=HumanMessage(content=tool_call["args"]["query"])
+    #这里any设置，是为了LLM检查完语法正确性后，接着去执行SQL看是否真的能执行使用
+    llm_with_tool=model.bind_tools([run_query_tool],tool_choice="any")
+    response=llm_with_tool.invoke([system_message,user_message])
+    #将两条带有tool_call的AIMessage合并成一条
+    response.id=state["messages"][-1].id
+    return {
+        "messages":[response]
+    }
 
 
 
