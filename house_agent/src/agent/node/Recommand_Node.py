@@ -69,13 +69,16 @@ def collect_user_info(state:RecommandState,runtime:Runtime[ContextSchema],*,stor
     user_preference_data=state.get("user_preference")
 
     #用户偏好中是否有“预期价位”，并且构造成一条消息
-    if user_preference_data and (user_preference_data["max_budget"] or user_preference_data["min_budget"]):
+    #注意：user_preference可能是dict，也可能是历史版本存入store的UserPreference实例，统一转dict
+    if user_preference_data and not isinstance(user_preference_data,dict):
+        user_preference_data=user_preference_data.model_dump()
+    if user_preference_data and (user_preference_data.get("max_budget") or user_preference_data.get("min_budget")):
         '''偏好中只有“预算”能够帮助筛选'''
         #构造成消息
         user_messages=[
             HumanMessage(content=f"这是该用户的历史偏好:"
-                                 f"租房的最低预算:{user_preference_data["min_budget"]}"
-                                 f"租房的最高预算:{user_preference_data["max_budget"]}"),
+                                 f"租房的最低预算:{user_preference_data.get('min_budget')}"
+                                 f"租房的最高预算:{user_preference_data.get('max_budget')}"),
             user_message[-1]
         ]
     else:
@@ -170,10 +173,11 @@ def collect_user_info(state:RecommandState,runtime:Runtime[ContextSchema],*,stor
                 max_budget=update_states["budget_max"],
                 min_budget=update_states["budget_min"],
             )
-            #存入store
-            store.put(namespace,uuid.uuid4(),pref)
+            #存入store（注意：store中统一存dict，不能存Pydantic实例，否则下游下标访问会报错）
+            pref_dict=pref.model_dump()
+            store.put(namespace,uuid.uuid4(),pref_dict)
             #存入共享状态的用户偏好中
-            update_states["user_preference"]=pref.model_dump(exclude_none=True)
+            update_states["user_preference"]=pref_dict
         else:
             '''进行“更新”操作，要判断存储的预算范围和新的预算范围的包含关系，决定是否更新'''
             pres=store_result[0].value

@@ -56,6 +56,7 @@ def add_HumanMessage(state:ReserveState):
     - 预定的房源标题：{title}
     - 用户预定号码：{phone_number}
     - 用户身份证号码：{id_card}
+    可能会有测试agent阶段，因此如果电话号码和身份证号码出现位数不符合也不用在在意
         """.format(title=state["house_name"],phone_number=state["phone_number"],id_card=state["id_card"])
 
     user_message=HumanMessage(content=reserve_prompt)
