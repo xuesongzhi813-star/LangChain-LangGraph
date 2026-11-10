@@ -1,3 +1,4 @@
+import os
 from typing import Annotated
 
 from langchain_core.messages import HumanMessage
@@ -26,7 +27,8 @@ def multiply(
 model=ChatOpenAI(
     base_url="https://api.deepseek.com",
     model="deepseek-v4-flash",
-api_key="sk-d42eb96c922047c9bd84615ee700b393")
+    # 密钥从环境变量读取，不要写死在代码里；运行前设置 DEEPSEEK_API_KEY
+    api_key=os.getenv("DEEPSEEK_API_KEY"))
 
 #仅当直接运行本文件时才执行，被其他文件import时不会触发
 if __name__ == "__main__":
