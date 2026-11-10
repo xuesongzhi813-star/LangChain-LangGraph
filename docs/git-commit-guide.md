@@ -607,6 +607,17 @@ git pull --no-rebase
 git config --global pull.rebase true
 ```
 
+### Q20. 推送时提示 `git: 'credential-manager-core' is not a git command`
+
+原因：Git for Windows 升级后，凭据助手的旧名字 `manager-core` 已改为 `manager`。如果本地还缓存着登录凭据，推送可能仍然成功，但每次都会打印这行警告。
+
+```powershell
+git config --global credential.helper manager
+git push
+```
+
+如果改完仍然无法认证，重新安装 Git for Windows（会一并安装 Git Credential Manager），再到“Windows 凭据管理器”里删除旧的 `git:https://github.com` 条目重新登录。
+
 ---
 
 ## 7. 每次提交前的自检清单
