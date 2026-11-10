@@ -31,6 +31,7 @@ class AgentStatus(AgentState):
     tool_Tokes_use: NotRequired[int]
 
 #节点定义的，模型中间件：统计模型调用次数
+#节点定义的中间件，本质可以理解成定义一个LangGraph的节点，节点传递的是状态--》拓展的AgentState更新
 @after_model(state_schema=AgentStatus)
 def after_model(state: AgentState,runtime:Runtime)->dict[str, Any] | None:
     return {"model_call_count":state.get("model_call_count",0)+1}
