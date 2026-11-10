@@ -1,0 +1,54 @@
+# ============================================================
+# 根目录 .gitignore
+# 作用：告诉 Git 哪些文件只留在本机，不要提交到仓库。
+# 规则从上到下匹配，越靠后优先级越高；以 ! 开头表示“重新包含”。
+# ============================================================
+
+# --- 环境变量 / 密钥（绝对不能提交）---
+.env
+.env.*
+# 但示例模板要提交，方便别人知道需要哪些变量
+!.env.example
+!**/.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+ENV/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- IDE / 编辑器配置（每个人机器上不一样，不提交）---
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+
+# --- 工具缓存 ---
+.claude/
+.langgraph_api/
+.langgraph-cli-venv/
+
+# --- 压缩包 / 大文件（GitHub 单文件超过 100MB 会被拒绝）---
+*.zip
+*.7z
+*.rar
+*.tar.gz
+
+# --- 日志与系统临时文件 ---
+*.log
+.DS_Store
+Thumbs.db
