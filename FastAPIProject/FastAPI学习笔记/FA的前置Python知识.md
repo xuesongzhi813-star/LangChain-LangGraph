@@ -17,6 +17,9 @@ Annotated是对一个函数内参数取值的**注入**
 
 # 正式学习FastAPI
 
+一个后来的理解：app更像是@注解的来源，要有这个对象才能调用注解
+
+---
 ## 第一个接口的书写
 
 ### get接口的书写
@@ -194,6 +197,316 @@ def read_product(payload: ProductCreate):
 3. 使用**model_dump()方法**可以实现“请求体”转换为JSON格式
 
 
+## 引入状态码和修改，删除商品
+
+
+## 与MySQL的交互（重点！！！）-->这里重点关注怎么连接
+
+### 1. 与数据库交互的前置准备
+
+#### 关于需要安装的依赖
+![alt text](assets/image-6.png)
+
+#### 配置MySQL数据库的配置信息文件--.env  
+根目录下创建.env文件，内容配置如下：
+```
+DATABASE_URL=mysql+pymysql://root:2096867998@127.0.0.1:3306/fastapi_demo?charset=utf8mb4
+```
+
+#### 创造读取“环境变量”的示例对象  
+在app文件夹下，创建config.py-->一般都是用于**读取本地环境中的配置资源**
+
+```
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+'''
+通过Settings对象读取环境变量中的配置信息
+'''
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env", #.env文件位置
+        env_file_encoding="utf-8"  #.env文件内容数据格式
+    )
+
+    database_url: str
+
+settings = Settings()
+```
+
+### 2. 正式创建
+
+#### 定义engine和ORM基类
+
+- engine：正式定义连接MySQL数据库
+
+- ORM：ORM相当于是**对象关系映射**  
+即：数据表-->映射成python类，表中的字段-->映射成类的属性
+
+   - ORM基类：就是所有数据表中**都有的字段**，直接封装成一个**基类**，直接继承使用即可
+
+   - ORM普通类：就是每个表格映射出的**python类**
+
+---
+engine与ORM基类：
+```
+from datetime import datetime
+
+from sqlalchemy import create_engine, DateTime, Integer
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+from app.config import settings
+
+engine=create_engine(settings.database_url)
+
+#ORM就是：将数据表-->映射成用python类表示，表中“属性字段（列）”-->python类中的属性
+#ORM基类：后续表类都要继承的类
+#通俗说法：所有表都有的公共字段，封装成公共类
+class Base(DeclarativeBase):
+    '''
+    类中字段的理解：
+    Mapped[int]：表中字段映射成类属性后，转换成python的基本数据类型
+    mapped_column：表中该列，原本的“设置属性”是怎么样的
+    '''
+    id: Mapped[int] = mapped_column(
+        Integer,primary_key=True,autoincrement=True,sort_order=-1,comment="主键ID"
+    )
+
+    create_time: Mapped[datetime] = mapped_column(
+        DateTime,nullable=False,default=datetime.now,comment="创建时间"
+    )
+```
+---
+
+#### ORM普通类-->表格的映射
+ ```
+ 
+'''
+编写两个ORM模型：商品分类表-->类，商品表-->类
+'''
+from decimal import Decimal
+
+from sqlalchemy import String, Integer, DECIMAL, Boolean, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.database import Base
+
+
+class Categories(Base):
+    '''
+    __tablename__ ：由数据库中哪张表转换
+    __table_args__：原本表的注释
+    '''
+    __tablename__ = 'categories'
+    __table_args__ = {"comment": "商品分类表"}
+
+    name: Mapped[str] = mapped_column(
+        String(50),nullable=False,unique=True,comment="商品类别名"
+    )
+
+class Products(Base):
+    __tablename__ = 'products'
+    __table_args__ = {"comment": "商品表"}
+
+    category_id: Mapped[int] = mapped_column(
+        Integer,ForeignKey("categories.id"),nullable=False,comment="商品种类"
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(50),nullable=False,comment="商品名称"
+    )
+
+    price: Mapped[Decimal] = mapped_column(
+        DECIMAL(8,2),nullable=False,comment="商品价格"
+    )
+
+    stock: Mapped[int] = mapped_column(
+        Integer,nullable=False,default=0,comment="商品库存"
+    )
+
+    shelf: Mapped[bool] = mapped_column(
+        Boolean,nullable=False,default=True,comment="商品是否上架"
+    )
+
+ ```
+
+### 3.编写启动脚本
+
+单独执行这个脚本，就能建表在MySQL中
+
+```
+from app import model
+from app.database import Base, engine
+
+
+#建表脚本
+def main():
+    """根据已经注册的模型，在数据库自动创建表"""
+    print("开始执行创建表的脚本")
+    Base.metadata.create_all(bind=engine)
+    print("相关的表已经创建成功")
+
+# 仅在主动运行此模块时建表，被其他模块导入时不执行。
+if __name__ == "__main__":
+    main()
+```
+
+## 真正与MySQL数据库操作（编写业务API）
+
+接下来的板块就是实际编写后端服务器上API接口的工程板块
+
+### models
+
+专门存放**ORM映射的Python类**
+
+例如这里映射了categories（商品种类表），product（商品表）
+
+```
+**关于商品种类表**
+
+'''
+model包的含义：一般存放ORM映射表->类后的类
+ORM模型：商品分类表-->类.
+'''
+from decimal import Decimal
+
+from sqlalchemy import String, Integer, DECIMAL, Boolean, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.database import Base
+
+
+class Categories(Base):
+    '''
+    __tablename__ ：由数据库中哪张表转换
+    __table_args__：原本表的注释
+    '''
+    __tablename__ = 'categories'
+    __table_args__ = {"comment": "商品分类表"}
+
+    name: Mapped[str] = mapped_column(
+        String(50),nullable=False,unique=True,comment="商品类别名"
+    )
+```
+
+```
+关于商品表
+
+'''
+model包的含义：一般存放ORM映射表->类后的类
+ORM模型：商品表-->类
+'''
+from decimal import Decimal
+
+from sqlalchemy import String, Integer, DECIMAL, Boolean, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.database import Base
+
+class Products(Base):
+    __tablename__ = 'products'
+    __table_args__ = {"comment": "商品表"}
+
+    category_id: Mapped[int] = mapped_column(
+        Integer,ForeignKey("categories.id"),nullable=False,comment="商品种类"
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(50),nullable=False,comment="商品名称"
+    )
+
+    price: Mapped[Decimal] = mapped_column(
+        DECIMAL(8,2),nullable=False,comment="商品价格"
+    )
+
+    stock: Mapped[int] = mapped_column(
+        Integer,nullable=False,default=0,comment="商品库存"
+    )
+
+    shelf: Mapped[bool] = mapped_column(
+        Boolean,nullable=False,default=True,comment="商品是否上架"
+    )
+```
+### schemas
+
+一般schemas中存放调用API的**输入参数，封装成一个类**和**输出结果结构**-->这样前端可以清除接收API调用了什么，处理了什么
+```
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
+
+"""
+结构化包装：
+统一封装调用category表相关API，传入数据的格式/返回数据的格式
+封装成类，方便调用。并且可以统一校验“参数问题”，不用一个个排查
+"""
+
+
+class CategoryCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=50, description="分类名称")
+
+
+class CategoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int = Field(description="分类ID")
+    name: str = Field(description="分类名称")
+    create_time: datetime = Field(description="创建时间")
+
+    @field_serializer("create_time")
+    def serialize_create_time(self, value: datetime) -> str:
+        # 2026-10-22 16:05:10
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+```
+### common
+
+common中一般存放整个业务公用的内容：  
+例如，统一返回结构，统一处理异常-->方便前后端交互，统一适配
+
+
+### api
+
+相当于Java中的controller层，暴露给前端的服务器后端API，但是只是调用，不是处理业务
+
+### service
+相当于Java中的service层，由api调用后进来处理业务逻辑
+
+
+### main
+这个层一般就是汇总所有的部分到一起，充当启动后的服务器
+```
+
+"""
+最终统一的服务器
+"""
+from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.api import api_router
+from app.common.exceptions import BusinessError, handle_business_error, handle_database_error, handle_http_error, \
+    handle_validation_error, handle_unexpected_error
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from app.common.response import Response
+
+#统一接口返回（调用失败的统一返回）
+app = FastAPI(responses={422: {"model": Response,"description": "请求参数校验失败"}})
+#所有分支路由，汇总到总路由
+app.include_router(api_router)
+
+#汇总所有的异常处理
+app.add_exception_handler(BusinessError, handle_business_error)
+app.add_exception_handler(SQLAlchemyError, handle_database_error)
+app.add_exception_handler(StarletteHTTPException, handle_http_error)
+app.add_exception_handler(RequestValidationError, handle_validation_error)
+app.add_exception_handler(Exception, handle_unexpected_error)
+
+
+@app.get("/")
+def read_root():
+    '''观测FastAPI服务器是否存活'''
+    return {"message": "FastAPI服务器正在运行中"}
 
 
 
+```
